@@ -1,0 +1,334 @@
+---
+title: "final_project_HarvardX"
+author: "Nancy Chalhoub"
+date: "1/7/2021"
+output: pdf_document
+---
+
+## Summary
+This is the report relative to "choose your own project" in the Capstone course of HarvardX's Data Science Professional Certificate program.
+
+## Introduction
+
+In this project, we will use the "Adult census Income" dataset which was extracted from 1994 Census Bureau database. Our objective is to predict, using the different available information like gender, education level, native country ... (a full list of parameters is detailed in the report), if a certain person's annual salary exceeds 50k. 
+
+## Methods and Analysis
+
+In this section, we will describe how the dataset was prepared for the analysis. We start by downloading and preparing the dataset that we will use.
+
+### Data preparation
+```{r create-dataset}
+##########################################################
+# Create edx set, validation set (final hold-out test set)
+##########################################################
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(stringr)
+library(lubridate)
+
+suppressMessages(library(caret))
+
+incomes_ds <- read.csv('adult.csv', stringsAsFactors = F, na.strings=c("","NA"," ","?"))
+```
+
+First, we can see that `incomes_ds` dataset has 32561 rows and 15 columns.
+```{r ds-dimension}
+nrow(incomes_ds)
+ncol(incomes_ds)
+```
+
+We can take a look at the first 6 entries of the dataset:
+```{r ds-head}
+head(incomes_ds)
+```
+We can see that this is a tidy dataset with one observation per row.
+
+The `incomes_ds` dataset has the following columns:
+```{r ds-colnames}
+colnames(incomes_ds)
+```
+We will now check the structure of `incomes_ds`
+```{r ds-struct}
+str(incomes_ds)
+```
+We can notice that a lot of columns with categorical factors are there, however many of these columns have too many factors than required. In this data cleaning section we'll try to reduce the number of factors by cleaning the columns. We start with the `workclass` column. Using the table() function, we check the frequency of each factor
+```{r workclass-tbl}
+table(incomes_ds$workclass)
+```
+We can combine "Never-worked" and "Without-pay" into a single group called "Unemployed", "Self-emp-inc" and "Self-emp-not-inc" into a single group called "Self-emp", and "Federal-gov", "State-gov" and "Local-gov" into a group called "Gov":
+```{r workclass-simpl}
+incomes_ds$workclass <- ifelse(incomes_ds$workclass %in% c("Never-worked","Without-pay"),"Unemployed",incomes_ds$workclass)
+incomes_ds$workclass <- ifelse(incomes_ds$workclass %in% c("Local-gov","Federal-gov","State-gov"),"Gov",incomes_ds$workclass)
+incomes_ds$workclass <- ifelse(incomes_ds$workclass %in% c("Self-emp-inc","Self-emp-not-inc"),"Self-emp",incomes_ds$workclass)
+
+table(incomes_ds$workclass)
+```
+Next, we will do the same analysis on the marital status column into 3 groups: "Married", "Not-Married" and "Never-married".
+```{r marital-simpl}
+incomes_ds$marital.status <- ifelse (incomes_ds$marital.status %in% c("Separated","Divorced","Widowed"),"Not-Married",incomes_ds$marital.status)
+incomes_ds$marital.status <- ifelse (incomes_ds$marital.status %in% c("Married-AF-spouse","Married-civ-spouse","Married-spouse-absent"),"Married",incomes_ds$marital.status)
+table(incomes_ds$marital.status)
+
+```
+
+We can also group the countries into continents as follows:
+```{r country-simpl}
+Asia <- c("China","Hong","India","Iran","Cambodia","Japan", "Laos","Philippines" ,"Vietnam" ,"Taiwan", "Thailand")
+
+N.A <- c("Canada","United-States","Puerto-Rico")
+
+Europe <- c("England","France","Germany" ,"Greece","Holand-Netherlands","Hungary","Ireland","Italy","Poland","Portugal","Scotland"
+            ,"Yugoslavia")
+
+S.A <- c("Columbia","Cuba","Dominican-Republic","Ecuador","El-Salvador","Guatemala","Haiti","Honduras","Mexico","Nicaragua"
+                   ,"Outlying-US","Peru","Jamaica","Trinadad&Tobago")
+Others <- c("South")
+grp_cntry <- function(cntry){
+    if (cntry %in% Asia){
+        return("Asia")
+    }else if (cntry %in% N.A){
+        return("North America")
+    }else if (cntry %in% Europe){
+        return("Europe")
+    }else if (cntry %in% S.A){
+        return("South America")
+    }else{
+        return("Others")      
+    }
+}
+
+incomes_ds$native.country <- sapply(incomes_ds$native.country,grp_cntry)
+table(incomes_ds$native.country)
+```
+
+To simplify our study, we will convert the chr columns into factors. Moreover, since we are interested in predicting if the income is higher or lower than 50k, we will convert the last column into a factor column with 2 levels: 0 if the income is lower than 50k and 1 otherwise.
+```{r chr-fct}
+incomes_ds$workclass <- as.factor(incomes_ds$workclass)
+incomes_ds$education <- as.factor(incomes_ds$education)
+incomes_ds$education.num <- as.factor(incomes_ds$education.num)
+incomes_ds$marital.status <- as.factor(incomes_ds$marital.status)
+incomes_ds$occupation <- as.factor(incomes_ds$occupation)
+incomes_ds$relationship <- as.factor(incomes_ds$relationship)
+incomes_ds$race <- as.factor(incomes_ds$race)
+incomes_ds$sex <- as.factor(incomes_ds$sex)
+incomes_ds$native.country <- as.factor(incomes_ds$native.country)
+incomes_ds$income <- ifelse(incomes_ds$income=='>50K',1,0)
+incomes_ds$income <- as.factor(incomes_ds$income)
+```
+
+We will know check for missing data.
+```{r check-miss}
+library(Amelia)
+missmap(incomes_ds)
+```
+We can see that many observations lack some entries. For example, we can see that we have 1843 entries where the `occupation` is unknown, and since this is essential for our predictions, we will remove those entries from our dataset.
+```{r remove-miss}
+sum(is.na(incomes_ds$occupation))
+incomes_ds <- incomes_ds[!is.na(incomes_ds$occupation),]
+```
+
+We can check for remaining missing values in the whole dataset as follows:
+```{r recheck-miss}
+sapply(1:ncol(incomes_ds), function (n) {sum(is.na(incomes_ds[,n]))})
+```
+We still have 30718 entry with all entries.
+
+```{r ds-rem}
+nrow(incomes_ds)
+```
+
+### Data exploration
+We will begin now to make some studies on our dataset to better understand it. 
+```{r ds-inc-comp}
+incomes_ds %>% ggplot(aes(x=income))+ geom_bar()
+incomes_ds %>% group_by(income)%>% summarise(avg=n()/nrow(incomes_ds))
+```
+
+The entries in our dataset are divided as follows: 75% with income less than 50k and 25% with income greater than 50k.
+
+We can now check how are the entries divided between the different work classes:
+```{r ds-work-comp}
+incomes_ds %>% ggplot(aes(x=workclass))+ geom_bar()
+incomes_ds %>% group_by(workclass)%>% summarise(count=n())
+
+```
+We can also see that the majority of the workers in the dataset work in the private sector. We can then see the percentage of people with higher income in each of these work classes.
+```{r inc-work}
+incomes_ds %>% ggplot(aes(x=workclass,fill=income)) + geom_bar(position = "fill")+ scale_fill_discrete(labels=c("<=50k", ">50k"))+theme(axis.text.x = element_text(angle = 90))
+
+```
+We can see that the highest proportion of well paid workers is the self-employed workclass.
+
+We will now compare income between different genders and work classes.
+```{r inc-work-gender}
+incomes_ds %>% ggplot(aes(x=sex,fill=income)) + geom_bar(position = "fill")+facet_wrap(incomes_ds$workclass) + scale_fill_discrete(labels=c("<=50k", ">50k"))
+```
+We can see that, in a particular sector, the proportion of high income within male is higher than within female.
+It's also interesting to compare the income between different education levels.
+```{r inc-ed}
+incomes_ds %>% ggplot(aes(x=education.num,fill=income)) + geom_bar(position = "fill")+ scale_fill_discrete(labels=c("<=50k", ">50k"))+theme(axis.text.x = element_text(angle = 90))+scale_x_discrete(breaks=incomes_ds$education.num,
+                      labels=incomes_ds$education,name="Education Level")
+
+```
+We can clearly the relation between the education level and the percentage of people with income higher than 50K: the more a person is educated, the higher her chance to earn more than 50k.
+We can look at the distribution with respect to the native country:
+```{r inc-country}
+incomes_ds %>% ggplot(aes(x=native.country,fill=income)) + geom_bar(position = "fill")+ scale_fill_discrete(labels=c("<=50k", ">50k"))+theme(axis.text.x = element_text(angle = 90))
+```
+We can see that the proportion of people with a annual salary is higher than 50k is the highest in Asia. This is result is to be taken with caution because some countries in Asia are rich while others are poor. A better approach if we are interested in those details is not to keep the country column and add another column with the region.
+Finally, we show the relation between the age and the income status. First, we will make a boxplot of age vs income:
+```{r box-inc-age}
+incomes_ds %>% ggplot(aes(x=income,y=age))+geom_boxplot()
+```
+We observe that the median age of people with annual salary that exceeds 50k is significantly larger than the median age of those with annual salary lower than 50k.
+
+We can also make an observation by dividing the age into different ranges by 5-year increment and then we plot the proportion of income lower or higher than 50k.
+```{r inc-age}
+range <- as.factor(c("-20","21-25","26-30","31-35","36-40","41-45","46-50","51-55","56-60","60-65","66+"))
+age_range <- sapply(incomes_ds$age,function(age) {
+  if(age <= 20) range[1]
+  else if (age <= 25) range[2]
+  else if (age <= 30) range[3]
+  else if (age <= 35) range[4]
+  else if (age <= 40) range[5]
+  else if (age <= 45) range[6]
+  else if (age <= 50) range[7]
+  else if (age <= 55) range[8]
+  else if (age <= 60) range[9]
+  else if (age <= 65) range[10]
+  else range[11]
+})
+incomes_ds <- incomes_ds %>% mutate(agerange=age_range)
+incomes_ds %>% ggplot(aes(x=agerange,fill=income)) + geom_bar(position = "fill")+ scale_fill_discrete(labels=c("<=50k", ">50k"))+theme(axis.text.x = element_text(angle = 90))+scale_x_discrete(name="Age Range")
+
+```
+We now plot the proportion of higher paid people relatively to their marital status:
+```{r inc-marital}
+incomes_ds %>% ggplot(aes(x=marital.status,fill=income)) + geom_bar(position = "fill")+ scale_fill_discrete(labels=c("<=50k", ">50k"))+theme(axis.text.x = element_text(angle = 90))+scale_x_discrete(name="Marital Status")
+```
+and we see that the highest percentage of well paid people is between the ones who are married, while the lowest is between the ones who never married.
+
+Finally, in order to simplify our analysis, we will keep the columns `agerange`, `workclass`, `education`, `marital.status`, `occupation`, `native.country`, `sex`, `race`, and `income` for our study:
+```{r ds-remove}
+incomes_ds <- incomes_ds %>% select(agerange,workclass,education,marital.status,occupation,native.country,sex,race,income)
+```
+This dataset needs a lot of time for processing, therefore, we will randomly select 5000 entries and make our tests on this sample.
+```{r}
+incomes_ds <- incomes_ds[sample(nrow(incomes_ds), 5000), ]
+```
+
+
+### Prediction methods
+
+We will test 10 machine learning models and then We will use an ensemble prediction by majority vote to predict the income of a person knowing his age, education level, gender.
+
+The models that we will use are the following: "naive_bayes", "glm", "knn", "rpart", "rf", "multinom", and "xgbTree".
+
+## Results
+
+We begin by dividing our dataset into a train set and a test set:
+```{r create-test-train}
+set.seed(1, sample.kind="Rounding")
+test_index <- createDataPartition(y = incomes_ds$income, times = 1, p = 0.15, list = FALSE)
+train_set <- incomes_ds[-test_index,]
+test_set <- incomes_ds[test_index,]
+
+```
+
+Then, we use the function train of the caret to train these models on our train set: 
+```{r naive-model}
+set.seed(1, sample.kind="Rounding")
+fit_naive <- train(income ~ . , method = "naive_bayes", data = train_set)
+predict_naive <- predict(fit_naive,newdata = test_set)
+accuracy_naive <- confusionMatrix(predict_naive,test_set$income)$overall['Accuracy']
+accuracy_naive
+```
+
+```{r glm-model}
+set.seed(1, sample.kind="Rounding")
+fit_glm <- train(income ~ . , method = "glm", data = train_set,family = binomial(logit))
+predict_glm <- predict(fit_glm,newdata = test_set)
+accuracy_glm <- confusionMatrix(predict_glm,test_set$income)$overall['Accuracy']
+accuracy_glm
+```
+
+```{r multinom-model}
+set.seed(1, sample.kind="Rounding")
+fit_multinom <- train(income ~ . , method = "multinom", data = train_set)
+predict_multinom <- predict(fit_multinom,newdata = test_set)
+accuracy_multinom <- confusionMatrix(predict_multinom,test_set$income)$overall['Accuracy']
+accuracy_multinom
+```
+
+```{r knn-model}
+set.seed(1, sample.kind="Rounding")
+fit_knn <- train(income ~ . , method = "knn", data = train_set,tuneGrid = data.frame(k = c(3,5,7,9)))
+predict_knn <- predict(fit_knn,newdata = test_set)
+accuracy_knn <- confusionMatrix(predict_knn,test_set$income)$overall['Accuracy']
+accuracy_knn
+```
+
+```{r rpart-model}
+set.seed(1, sample.kind="Rounding")
+fit_rpart <- train(income ~ . ,
+                     method = "rpart",
+                     tuneGrid = data.frame(cp = seq(0.0, 0.1, len = 25)),
+                     data = train_set)
+predict_rpart <- predict(fit_rpart,newdata = test_set)
+accuracy_rpart <- confusionMatrix(predict_rpart,test_set$income)$overall['Accuracy']
+accuracy_rpart
+
+library(rattle)
+fancyRpartPlot(fit_rpart$finalModel,cex=0.75,main="Decision Tree",palettes = "Reds")
+```
+
+
+```{r rf-model}
+set.seed(1, sample.kind="Rounding")
+fit_rf <- train(income ~ . , method = "rf", data = train_set,tuneGrid = data.frame(mtry = c(1, 5, 10)))
+predict_rf <- predict(fit_rf,newdata = test_set)
+accuracy_rf <- confusionMatrix(predict_rf,test_set$income)$overall['Accuracy']
+accuracy_rf
+```
+
+```{r xgbTree-model}
+set.seed(1, sample.kind="Rounding")
+fit_xgbTree <- train(income ~ . , method = "xgbTree", data = train_set)
+predict_xgbTree <- predict(fit_xgbTree,newdata = test_set)
+accuracy_xgbTree <- confusionMatrix(predict_xgbTree,test_set$income)$overall['Accuracy']
+accuracy_xgbTree
+```
+
+We will build now an ensemble prediction by majority vote. We will vote that the income is higher than 50k if more than 50% of the models are predicting that, and lower otherwise.
+```{r}
+pos_glm <- predict_glm == 1
+pos_knn <- predict_knn == 1 
+pos_naive <- predict_naive == 1 
+pos_rf <- predict_rf == 1 
+pos_rpart <- predict_rpart == 1 
+pos_multinom <- predict_multinom == 1 
+pos_xgbTree <- predict_xgbTree == 1 
+predictions <- cbind(pos_glm,pos_knn,pos_naive,pos_rf,pos_rpart,pos_xgbTree,pos_multinom)
+votes <- rowMeans(predictions)
+y_hat <- ifelse(votes > 0.5, "1", "0")
+accuracy_ens <- mean(y_hat == test_set$income)
+accuracy_ens
+```
+
+We notice that the ensemble accuracy is higher than the accuracy of the "knn"-model, the "naive-bayes"-model, "rf"-model, "rpart"-model, and the "xgbTree"-model but lower than the accuracy of the "glm"-model and the "multinom"-model. 
+
+## Conclusion and Perspectives
+In conclusion, we have tried in this report 7 different models to predict if a certain person earns more than 50k per year based on the following parameters: Age range, Work-class, Education level, Marital status, Occupation, Native country, Gender, and Race.
+The models that we tried are the following: "naive_bayes", "glm", "knn", "rpart", "rf", "multinom", and "xgbTree".
+Then, we built an ensemble prediction by majority vote, and an ensemble prediction by removing the models that gave low accuracy.
+The best accuracy was achieved using the "glm"-model.
+
+This work is just the beginning of the analysis and there's many steps that can be carried further. 
+- The first main step is to make the analysis using the whole dataset, which I was not able to carry because of the limitation of my machine.
+- One idea is to better analyze each of the attributes and choose the ones with the highest influence. This step can reduce the number of parameters and hence improve the computation time.
+- Another weak point of this analysis is the distribution of the observations between continents with the vast majority coming from North America and specifically from the United States. It might be more interesting to make the study for the North American residents only.
+- It's also important to note that this data is old and the results and conclustions that we derive might not be applied to the current time.
+
+I end this report with a quote that I saw while searching for my project: "In ancient times, the ability to predict the future was called precognition. Nowadays we call it machine learning."
